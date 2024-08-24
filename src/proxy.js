@@ -1,7 +1,7 @@
 "use strict";
 
 const undici = require("undici");
-const pick = require('lodash').pick;
+const pick = require("lodash/pick");
 const shouldCompress = require("./shouldCompress");
 const redirect = require("./redirect");
 const compress = require("./compress");
@@ -27,7 +27,7 @@ async function proxy(req, reply) {
 
     Object.entries(hdrs).forEach(([key, value]) => reply.header(key, value));
 
-    return reply.send('1we23');
+    return reply.send('1we23'); // Ensure reply.send() is only called once
   }
 
   const urlList = Array.isArray(url) ? url.join('&url=') : url;
@@ -38,7 +38,12 @@ async function proxy(req, reply) {
   req.params.grayscale = bw !== '0';
   req.params.quality = parseInt(l, 10) || 40;
 
-  
+  if (
+    req.headers["via"] === "1.1 bandwidth-hero" &&
+    ["127.0.0.1", "::1"].includes(req.headers["x-forwarded-for"] || req.ip)
+  ) {
+    return redirect(req, reply); // Ensure redirect() is only called once
+  }
 
   try {
     let origin = await undici.request(req.params.url, {
@@ -48,27 +53,47 @@ async function proxy(req, reply) {
         "x-forwarded-for": req.headers["x-forwarded-for"] || req.ip,
         via: "1.1 bandwidth-hero",
       },
-      timeout: 10000,
       maxRedirections: 4
     });
 
-    _onRequestResponse(origin, req, reply);
+    return _onRequestResponse(origin, req, reply); // Ensure _onRequestResponse() returns
   } catch (err) {
-    _onRequestError(req, reply, err);
+    return _onRequestError(req, reply, err); // Ensure _onRequestError() returns
   }
 }
 
 function _onRequestError(req, reply, err) {
-  if (err.code === "ERR_INVALID_URL") return reply.status(400).send("Invalid URL");
+  if (err.code === "ERR_INVALID_URL") {
+    if (!reply.sent) {
+      reply.status(400).send("Invalid URL");
+      return; // Ensure no further processing
+    }
+    return;
+  }
 
-  redirect(req, reply);
-  console.error(err);
+  if (!reply.sent) {
+    redirect(req, reply);
+    console.error(err);
+    return; // Ensure no further processing
+  }
 }
 
 function _onRequestResponse(origin, req, reply) {
-  if (origin.statusCode >= 400) return redirect(req, reply);
+  if (origin.statusCode >= 400) {
+    if (!reply.sent) {
+      redirect(req, reply);
+      return; // Ensure no further processing
+    }
+    return;
+  }
 
-  if (origin.statusCode >= 300 && origin.headers.location) return redirect(req, reply);
+  if (origin.statusCode >= 300 && origin.headers.location) {
+    if (!reply.sent) {
+      redirect(req, reply);
+      return; // Ensure no further processing
+    }
+    return;
+  }
 
   copyHeaders(origin, reply);
   reply
@@ -80,25 +105,28 @@ function _onRequestResponse(origin, req, reply) {
   req.params.originType = origin.headers["content-type"] || "";
   req.params.originSize = origin.headers["content-length"] || "0";
 
-  origin.body.on('error', () => req.socket.destroy());
+  origin.body.on('error', (err) => {
+    console.error('Stream error:', err);
+    if (!reply.sent) reply.raw.destroy(err);
+  });
 
   if (shouldCompress(req)) {
-    return compress(req, reply, origin);
+    return compress(req, reply, origin); // Ensure compress() is handled properly
   } else {
     reply.header("x-proxy-bypass", 1);
 
     for (const headerName of ["accept-ranges", "content-type", "content-length", "content-range"]) {
-      if (headerName in origin.headers)
+      if (headerName in origin.headers) {
         reply.header(headerName, origin.headers[headerName]);
+      }
     }
 
-    // Ensure proper handling of stream errors
     origin.body.on('error', (err) => {
       console.error('Stream error:', err);
-      reply.raw.destroy(err);
+      if (!reply.sent) reply.raw.destroy(err);
     });
 
-    origin.body.pipe(reply.raw);
+    return origin.body.pipe(reply.raw); // Ensure piping is handled properly
   }
 }
 
