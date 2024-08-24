@@ -1,91 +1,69 @@
 "use strict";
-/*
- * proxy.js
- * The bandwidth hero proxy handler.
- * proxy(httpRequest, httpResponse);
- */
-const undici = require("undici");
+const { request } = require("undici");
 const pick = require("lodash").pick;
 const shouldCompress = require("./shouldCompress");
 const redirect = require("./redirect");
 const compress = require("./compress");
 const copyHeaders = require("./copyHeaders");
 
-async function proxy(req, res) {
-  /*
-   * Avoid loopback that could causing server hang.
-   */
+async function proxy(request, reply) {
   if (
-    req.headers["via"] == "1.1 bandwidth-hero" &&
-    ["127.0.0.1", "::1"].includes(req.headers["x-forwarded-for"] || req.ip)
+    request.headers["via"] == "1.1 bandwidth-hero" &&
+    ["127.0.0.1", "::1"].includes(request.headers["x-forwarded-for"] || request.ip)
   )
-    return redirect(req, res);
+    return redirect(request, reply);
+
   try {
-    let origin = await undici.request(req.params.url, {
+    let origin = await request(request.params.url, {
       headers: {
-        ...pick(req.headers, ["cookie", "dnt", "referer", "range"]),
+        ...pick(request.headers, ["cookie", "dnt", "referer", "range"]),
         "user-agent": "Bandwidth-Hero Compressor",
-        "x-forwarded-for": req.headers["x-forwarded-for"] || req.ip,
+        "x-forwarded-for": request.headers["x-forwarded-for"] || request.ip,
         via: "1.1 bandwidth-hero",
       },
-      maxRedirections: 4
+      maxRedirections: 4,
     });
-    _onRequestResponse(origin, req, res);
+    _onRequestResponse(origin, request, reply);
   } catch (err) {
-    _onRequestError(req, res, err);
+    _onRequestError(request, reply, err);
   }
 }
 
-function _onRequestError(req, res, err) {
-  // Ignore invalid URL.
-  if (err.code === "ERR_INVALID_URL") return res.status(400).send("Invalid URL");
+function _onRequestError(request, reply, err) {
+  if (err.code === "ERR_INVALID_URL") return reply.status(400).send("Invalid URL");
 
-  /*
-   * When there's a real error, Redirect then destroy the stream immediately.
-   */
-  redirect(req, res);
+  redirect(request, reply);
   console.error(err);
 }
 
-function _onRequestResponse(origin, req, res) {
-  if (origin.statusCode >= 400)
-    return redirect(req, res);
+function _onRequestResponse(origin, request, reply) {
+  if (origin.statusCode >= 400) return redirect(request, reply);
 
-  // handle redirects
-  if (origin.statusCode >= 300 && origin.headers.location)
-    return redirect(req, res);
+  if (origin.statusCode >= 300 && origin.headers.location) return redirect(request, reply);
 
-  copyHeaders(origin, res);
-  res.setHeader("content-encoding", "identity");
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
-  req.params.originType = origin.headers["content-type"] || "";
-  req.params.originSize = origin.headers["content-length"] || "0";
+  copyHeaders(origin, reply);
+  reply
+    .header("content-encoding", "identity")
+    .header("Access-Control-Allow-Origin", "*")
+    .header("Cross-Origin-Resource-Policy", "cross-origin")
+    .header("Cross-Origin-Embedder-Policy", "unsafe-none");
+  
+  request.params.originType = origin.headers["content-type"] || "";
+  request.params.originSize = origin.headers["content-length"] || "0";
 
-  origin.body.on('error', _ => req.socket.destroy());
+  origin.body.on("error", () => request.raw.socket.destroy());
 
-  if (shouldCompress(req)) {
-    /*
-     * sharp support stream. So pipe it.
-     */
-    return compress(req, res, origin);
+  if (shouldCompress(request)) {
+    return compress(request, reply, origin);
   } else {
-    /*
-     * Downloading then uploading the buffer to the client is not a good idea though,
-     * It would better if you pipe the incomming buffer to client directly.
-     */
-
-    res.setHeader("x-proxy-bypass", 1);
+    reply.header("x-proxy-bypass", 1);
 
     for (const headerName of ["accept-ranges", "content-type", "content-length", "content-range"]) {
-      if (headerName in origin.headers)
-        res.setHeader(headerName, origin.headers[headerName]);
+      if (headerName in origin.headers) reply.header(headerName, origin.headers[headerName]);
     }
 
-    return origin.body.pipe(res);
+    return origin.body.pipe(reply.raw);
   }
 }
-
 
 module.exports = proxy;
