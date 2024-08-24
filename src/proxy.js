@@ -38,12 +38,7 @@ async function proxy(req, reply) {
   req.params.grayscale = bw !== '0';
   req.params.quality = parseInt(l, 10) || 40;
 
-  if (
-    req.headers["via"] === "1.1 bandwidth-hero" &&
-    ["127.0.0.1", "::1"].includes(req.headers["x-forwarded-for"] || req.ip)
-  ) {
-    return redirect(req, reply);
-  }
+  
 
   try {
     let origin = await undici.request(req.params.url, {
@@ -53,6 +48,7 @@ async function proxy(req, reply) {
         "x-forwarded-for": req.headers["x-forwarded-for"] || req.ip,
         via: "1.1 bandwidth-hero",
       },
+      timeout: 10000,
       maxRedirections: 4
     });
 
