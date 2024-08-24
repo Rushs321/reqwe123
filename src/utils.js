@@ -1,4 +1,4 @@
-
+"use strict";
 function generateRandomIP() {
   return `${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}.${Math.floor(Math.random() * 256)}`;
 }
