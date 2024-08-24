@@ -1,29 +1,39 @@
 "use strict";
-
+/*
+ * compress.js
+ * A module that compresses an image.
+ * compress(fastifyReq, fastifyReply, ReadableStream);
+ */
 const sharp = require('sharp');
 const redirect = require('./redirect');
 
 const sharpStream = () => sharp({ animated: !process.env.NO_ANIMATE, unlimited: true });
 
-async function compress(req, reply, input) {
+function compress(req, reply, input) {
   const format = req.params.webp ? 'webp' : 'jpeg';
 
-  try {
-    const output = await sharpStream()
+  /*
+   * Determine the uncompressed image size when there's no content-length header.
+   */
+
+  /*
+   * input.pipe => sharp (The compressor) => Send to fastifyReply
+   * The following headers:
+   * |  Header Name  |            Description            |           Value            |
+   * |---------------|-----------------------------------|----------------------------|
+   * |x-original-size|Original photo size                |OriginSize                  |
+   * |x-bytes-saved  |Saved bandwidth from original photo|OriginSize - Compressed Size|
+   */
+  input.body.pipe(
+    sharpStream()
       .grayscale(req.params.grayscale)
       .toFormat(format, {
         quality: req.params.quality,
         progressive: true,
         optimizeScans: true,
       })
-      .toBuffer();
-
-    const info = await sharp(output).metadata();
-
-    _sendResponse(null, output, info, format, req, reply);
-  } catch (err) {
-    _sendResponse(err, null, null, format, req, reply);
-  }
+      .toBuffer((err, output, info) => _sendResponse(err, output, info, format, req, reply))
+  );
 }
 
 function _sendResponse(err, output, info, format, req, reply) {
