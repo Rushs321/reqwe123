@@ -1,7 +1,7 @@
 "use strict";
 
 const undici = require("undici");
-const pick = require('lodash').pick;
+const pick = require("lodash/pick");
 const shouldCompress = require("./shouldCompress");
 const redirect = require("./redirect");
 const compress = require("./compress");
@@ -41,8 +41,9 @@ async function proxy(req, reply) {
   if (
     req.headers["via"] === "1.1 bandwidth-hero" &&
     ["127.0.0.1", "::1"].includes(req.headers["x-forwarded-for"] || req.ip)
-  )
+  ) {
     return redirect(req, reply);
+  }
 
   try {
     let origin = await undici.request(req.params.url, {
@@ -95,7 +96,13 @@ function _onRequestResponse(origin, req, reply) {
         reply.header(headerName, origin.headers[headerName]);
     }
 
-    return origin.body.pipe(reply.raw);
+    // Ensure proper handling of stream errors
+    origin.body.on('error', (err) => {
+      console.error('Stream error:', err);
+      reply.raw.destroy(err);
+    });
+
+    origin.body.pipe(reply.raw);
   }
 }
 
