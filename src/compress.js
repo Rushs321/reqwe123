@@ -32,23 +32,18 @@ function compress(req, reply, input) {
         progressive: true,
         optimizeScans: true,
       })
-      .toBuffer((err, output, info) => _sendResponse(err, output, info, format, req, reply))
-  ).on('error', (err) => {
-    console.error('Compression stream error:', err);
-    reply.raw.destroy(err);
-  });
-}
+      .toBuffer((err, output, info) => {
+        if (err || !info) return redirect(req, reply);
 
-function _sendResponse(err, output, info, format, req, reply) {
-  if (err || !info) return redirect(req, reply);
-
-  reply
-    .header('content-type', 'image/' + format)
-    .header('content-length', info.size)
-    .header('x-original-size', req.params.originSize)
-    .header('x-bytes-saved', req.params.originSize - info.size)
-    .status(200)
-    .send(output);
+        reply
+          .header('content-type', 'image/' + format)
+          .header('content-length', info.size)
+          .header('x-original-size', req.params.originSize)
+          .header('x-bytes-saved', req.params.originSize - info.size)
+          .status(200)
+          .send(output);
+      })
+  );
 }
 
 module.exports = compress;
