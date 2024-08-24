@@ -33,7 +33,10 @@ function compress(req, reply, input) {
         optimizeScans: true,
       })
       .toBuffer((err, output, info) => _sendResponse(err, output, info, format, req, reply))
-  );
+  ).on('error', (err) => {
+    console.error('Compression stream error:', err);
+    reply.raw.destroy(err);
+  });
 }
 
 function _sendResponse(err, output, info, format, req, reply) {
